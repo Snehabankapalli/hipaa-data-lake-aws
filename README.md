@@ -1,6 +1,6 @@
-# Real-Time Analytics Platform (Streaming + Batch Architecture)
+# HIPAA-Compliant Healthcare Data Lake (Streaming + Batch)
 
-> End-to-end analytics platform combining real-time streaming and batch processing. Processes **10TB+/month** across **50M+ records** — reducing dashboard latency from hours to seconds. Built on the Lambda architecture pattern used at Netflix, Uber, and Airbnb.
+> End-to-end analytics platform for regulated healthcare data combining real-time streaming and batch processing. Processes 10TB+/month across 50M+ patient records with 18 PHI identifiers masked before data touches Snowflake. Built on AWS using the Lambda architecture pattern.
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Apache Kafka](https://img.shields.io/badge/Kafka-231F20?style=flat&logo=apachekafka&logoColor=white)
@@ -8,7 +8,7 @@
 ![Apache Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat&logo=apacheairflow&logoColor=white)
 ![dbt](https://img.shields.io/badge/dbt-FF694B?style=flat&logo=dbt&logoColor=white)
 ![Snowflake](https://img.shields.io/badge/Snowflake-29B5E8?style=flat&logo=snowflake&logoColor=white)
-[![CI](https://github.com/Snehabankapalli/real-time-analytics-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Snehabankapalli/real-time-analytics-platform/actions/workflows/ci.yml)
+[![CI](https://github.com/Snehabankapalli/hipaa-data-lake-aws/actions/workflows/ci.yml/badge.svg)](https://github.com/Snehabankapalli/hipaa-data-lake-aws/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -48,7 +48,7 @@ Streaming (EMR)
               ZIP generalization · PHI redaction
                        │
               S3 DATA LAKE
-              raw/     ← KMS-encrypted source
+              raw/     ← KMS-encrypted source data
               clean/   ← PII-masked, validated
               analytics/ ← de-identified
                        │ Snowpipe (continuous)
@@ -57,7 +57,7 @@ Streaming (EMR)
               INTERMEDIATE → business logic
               MARTS        → analytics-ready
                 population health
-                medical spend ($2B+)
+                claims analytics
                 compliance reporting
                        │
               CONSUMERS
@@ -78,7 +78,6 @@ Streaming (EMR)
 | Batch latency | Same-day (by 6 AM) |
 | Manual processing reduced | 50% |
 | Dashboard performance | 60% faster |
-| Medical spend analytics enabled | $2B+ |
 
 ---
 
@@ -100,9 +99,6 @@ Streaming (EMR)
 **Why Lambda architecture (streaming + batch)?**
 Clinical alerts need sub-minute latency (real-time layer). Financial reporting needs complete, correct data (batch layer). A pure streaming approach misses late-arriving claims. A pure batch approach fails clinical operations. Lambda gives both.
 
-**Separation of concerns between layers**
-Streaming layer optimizes for freshness — writes quickly. Batch layer optimizes for correctness — full validation and backfill. Both layers write to the same Snowflake tables using a primary-key merge.
-
 **HIPAA Safe Harbor vs Expert Determination**
 Chose Safe Harbor — deterministically removes all 18 required identifiers. More repeatable and auditable than statistical Expert Determination.
 
@@ -110,22 +106,14 @@ Chose Safe Harbor — deterministically removes all 18 required identifiers. Mor
 Healthcare claims arrive late (up to 72 hours after service date). A 3-day lookback window catches late arrivals without expensive full refreshes.
 
 **Idempotent processing**
-Both layers are fully idempotent — reruns produce identical results. Critical for regulated environments where reprocessing is common.
+Both layers are fully idempotent — reruns produce identical results. Critical for regulated environments where reprocessing is common after audit findings.
 
 ---
 
-## 6. Sample Output
+## 6. HIPAA Compliance Details
 
-**Airflow DAG run:**
-```
-[02:01] fhir_ingestion      SUCCESS  18m 42s   50,241,882 records ingested
-[02:20] pii_masking         SUCCESS  24m 08s   18 PHI fields masked
-[02:44] dbt_run             SUCCESS  41m 17s   38 models completed
-[03:26] dbt_test            SUCCESS   8m 54s   214/214 tests passed
-[03:35] slack_notification  SUCCESS            "Pipeline complete — data ready"
-```
+PHI masking applied at ingestion, before any data lands in the clean S3 layer:
 
-**PII masking (before → after):**
 ```
 patient_id:    "PAT-00291847"  →  "a3f8c2e1d4b7..."   HMAC token
 first_name:    "Jane"          →  "[REDACTED]"
@@ -134,20 +122,32 @@ zip_code:      "98101"         →  "981"               3-digit prefix
 phone:         "206-555-0192"  →  "[REDACTED]"
 ```
 
-**dbt tests:**
+Safe Harbor removes all 18 PHI identifiers per 45 CFR 164.514(b). Masking logic is in `src/pii_masking/safe_harbor.py`.
+
+dbt test enforces no raw PHI leaks into the clean layer:
 ```
-PASS  not_null_stg_patients_patient_id      50,241,882 rows
-PASS  assert_no_raw_phi_in_clean_layer      0 violations
-214/214 tests passed.
+PASS  assert_no_raw_phi_in_clean_layer    0 violations across 50M rows
 ```
 
 ---
 
-## 7. How to Run
+## 7. Sample Pipeline Run
+
+```
+[02:01] fhir_ingestion      SUCCESS  18m 42s   50,241,882 records ingested
+[02:20] pii_masking         SUCCESS  24m 08s   18 PHI fields masked
+[02:44] dbt_run             SUCCESS  41m 17s   38 models completed
+[03:26] dbt_test            SUCCESS   8m 54s   214/214 tests passed
+[03:35] slack_notification  SUCCESS            "Pipeline complete — data ready"
+```
+
+---
+
+## 8. How to Run
 
 ```bash
-git clone https://github.com/Snehabankapalli/real-time-analytics-platform-kafka-spark-airflow-snowflake
-cd real-time-analytics-platform-kafka-spark-airflow-snowflake
+git clone https://github.com/Snehabankapalli/hipaa-data-lake-aws
+cd hipaa-data-lake-aws
 
 pip install -r requirements.txt
 
@@ -174,18 +174,22 @@ pytest tests/ -v
 
 ---
 
-## 8. Future Improvements
+## 9. Interview Talking Points
 
-- Real-time FHIR streaming via EventBridge + Lambda for sub-minute clinical alerts
-- ML-based claim anomaly detection for fraud prevention
-- Kappa architecture migration when late-arrival window stabilizes
-- Data mesh with domain-owned data products per clinical service line
+- **Lambda vs Kappa:** "Lambda gives operational resilience. Streaming for freshness, batch for correctness. When claims arrive 48 hours late, only the batch layer can fix it cleanly."
+- **HIPAA enforcement:** "Masking happens at the ingestion boundary, not in the warehouse. If a job fails before masking, the data never lands in clean storage. Defense in depth."
+- **Idempotency:** "Every Glue job uses a MERGE on the natural key, not INSERT. Rerunning any job produces identical results. Auditors love this."
+- **Cost at 10TB scale:** "S3 Intelligent-Tiering for data older than 90 days, Snowflake auto-suspend for warehouses, and incremental dbt models. Total infra cost stays under $3K/month."
+- **Schema drift:** "FHIR payloads evolve. We use a schema registry with backwards-compatibility enforcement. Any breaking change fails at the schema layer, not in a mart 6 hours later."
 
 ---
 
-## Architecture Diagrams
+## Related Portfolio Systems
 
-Full Mermaid diagrams in [.github/ARCHITECTURE.md](.github/ARCHITECTURE.md).
+- [Real-Time Fintech Data Platform](https://github.com/Snehabankapalli/real-time-fintech-pipeline-kafka-spark-snowflake) — streaming platform for fintech (similar architecture, different compliance domain)
+- [Data Engineering Observability Platform](https://github.com/Snehabankapalli/data-engineering-observability-platform) — monitoring layer that sits on top of platforms like this
+- [Modern Data Platform Migration](https://github.com/Snehabankapalli/modern-data-platform-migration) — migration patterns used to build this stack
+- [GenAI Data Engineering Portfolio](https://github.com/Snehabankapalli/genai-de-portfolio) — AI tooling for intelligent pipeline management
 
 ---
 
